@@ -7,8 +7,6 @@
     "exclude": [
       "README.md",
       "cdk*.json",
-      "go.mod",
-      "go.sum",
       "**/*test.go"
     ]
   },

@@ -3,7 +3,9 @@ package main
 import (
 	"github.com/aws/aws-cdk-go/awscdk/v2"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awsapigateway"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awsiam"
 	"github.com/aws/aws-cdk-go/awscdk/v2/awslambda"
+	"github.com/aws/aws-cdk-go/awscdk/v2/awss3assets"
 	"github.com/aws/constructs-go/constructs/v10"
 	"github.com/aws/jsii-runtime-go"
 )
@@ -17,27 +19,41 @@ func NewServerlessChatgptWrapperStack(scope constructs.Construct, id string, pro
 	if props != nil {
 		sprops = props.StackProps
 	}
+
 	stack := awscdk.NewStack(scope, &id, &sprops)
 
 	api := awsapigateway.NewRestApi(stack, jsii.String("ChatGPTApiWrapper"), &awsapigateway.RestApiProps{
 		DefaultCorsPreflightOptions: &awsapigateway.CorsOptions{
-			AllowOrigins: awsapigateway.Cors_ALL_ORIGINS(),
-			AllowHeaders: jsii.Strings(*jsii.String("X-Api-Key")),
+			AllowOrigins:     awsapigateway.Cors_ALL_ORIGINS(),
+			AllowHeaders:     awsapigateway.Cors_DEFAULT_HEADERS(),
+			AllowMethods:     awsapigateway.Cors_ALL_METHODS(),
+			AllowCredentials: jsii.Bool(true),
 		},
+		CloudWatchRole: jsii.Bool(true),
 	})
 
 	testLambda := awslambda.NewFunction(stack, jsii.String("TestLambda"), &awslambda.FunctionProps{
 		Runtime: awslambda.Runtime_GO_1_X(),
 		Handler: jsii.String("main"),
-		Code:    awslambda.Code_FromAsset(jsii.String("./lambdas/test"), nil),
+		Code:    awslambda.Code_FromAsset(jsii.String("./lambdas/test"), &awss3assets.AssetOptions{}),
 	})
-	testResource := api.Root().AddResource(jsii.String("test"), nil)
-	testIntegration := awsapigateway.NewLambdaIntegration(testLambda, nil)
+
+	testResource := api.Root().AddResource(jsii.String("test"), &awsapigateway.ResourceOptions{})
+
+	testIntegration := awsapigateway.NewLambdaIntegration(testLambda, &awsapigateway.LambdaIntegrationOptions{})
+
 	testResource.AddMethod(jsii.String("POST"), testIntegration, &awsapigateway.MethodOptions{
-		ApiKeyRequired:    jsii.Bool(true),
-		AuthorizationType: awsapigateway.AuthorizationType_NONE,
+		ApiKeyRequired: jsii.Bool(true),
 	})
+
 	testKey := api.AddApiKey(jsii.String("testApiKey"), nil)
+
+	testLambda.AddPermission(jsii.String("AllowAPIGatewayInvoke"), &awslambda.Permission{
+		Action:    jsii.String("lambda:InvokeFunction"),
+		Principal: awsiam.NewServicePrincipal(jsii.String("apigateway.amazonaws.com"), &awsiam.ServicePrincipalOpts{}),
+		SourceArn: api.ArnForExecuteApi(jsii.String("*"), jsii.String("/test"), api.DeploymentStage().StageArn()),
+	})
+
 	usagePlan := awsapigateway.NewUsagePlan(stack, jsii.String("testUsagePlan"), &awsapigateway.UsagePlanProps{
 		Name: jsii.String("testUsagePlan"),
 		Throttle: &awsapigateway.ThrottleSettings{
@@ -45,20 +61,12 @@ func NewServerlessChatgptWrapperStack(scope constructs.Construct, id string, pro
 			BurstLimit: jsii.Number(2),
 		},
 	})
+
 	usagePlan.AddApiKey(testKey, nil)
-
-	deployment := awsapigateway.NewDeployment(stack, jsii.String("ApiDeployment"), &awsapigateway.DeploymentProps{
-		Api: api,
-	})
-
-	stage := awsapigateway.NewStage(stack, jsii.String("ProdStageV2"), &awsapigateway.StageProps{
-		Deployment: deployment,
-		StageName:  jsii.String("prodV2"),
-	})
 
 	usagePlan.AddApiStage(&awsapigateway.UsagePlanPerApiStage{
 		Api:   api,
-		Stage: stage,
+		Stage: api.DeploymentStage(),
 	})
 
 	return stack
